@@ -1,0 +1,501 @@
+print("Welcome To ZHub-Aim")
+print(" ")
+print("All Keybinds For The Menu [Insert] For The Aimbot [Left Alt] For The Esp [X] For Fly [END] For Speed [KEYPAD5]")
+
+-- SERVICES
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- SETTINGS
+local settings = {
+    MenuVisible = true,
+    AimbotEnabled = false,
+    ESPEnabled = false,
+    FlyEnabled = false,
+    SpeedEnabled = false,
+    VisualFOV = 80,
+    AimbotSmooth = 0.2,
+    SpeedMult = 2,
+    ESPMode = "3D Box",
+    LockedTarget = nil,
+    TeamCheckAimbot = true,
+    TeamCheckESP = true,
+    AngleProof = true,
+    Keybinds = {
+        Aimbot = Enum.KeyCode.LeftAlt,
+        ESP = Enum.KeyCode.X,
+        Fly = Enum.KeyCode.End,
+        Speed = Enum.KeyCode.KeypadFive,
+        ToggleMenu = Enum.KeyCode.Insert
+    }
+}
+
+-- Track if player is alive
+local isAlive = true
+local lastKillTime = 0
+local killCooldown = 1
+
+-- GUI SETUP
+local gui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
+gui.Name = "DevToolkit"
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.DisplayOrder = 999
+
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.new(0, 300, 0, 450)
+main.Position = UDim2.new(1, -310, 1, -460)
+main.BackgroundColor3 = Color3.fromRGB(22,22,22)
+main.BorderSizePixel = 0
+main.ZIndex = 10
+
+-- TAB BUTTONS
+local TFrame = Instance.new("Frame", main)
+TFrame.Size = UDim2.new(1, 0, 0, 30)
+TFrame.BackgroundColor3 = Color3.fromRGB(35,35,35)
+TFrame.ZIndex = 11
+
+local pages = {}
+local tabNames = {"Aimbot","ESP","Exploits","Keybinds"}
+
+local function switchTab(i)
+    for idx, pg in ipairs(pages) do
+        pg.Visible = (idx == i)
+    end
+end
+
+for i, name in ipairs(tabNames) do
+    local b = Instance.new("TextButton", TFrame)
+    b.Text = name
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.TextColor3 = Color3.new(1,1,1)
+    b.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    b.Size = UDim2.new(1/#tabNames, 0, 1, 0)
+    b.Position = UDim2.new((i-1)/#tabNames, 0, 0, 0)
+    b.ZIndex = 12
+    pages[i] = Instance.new("Frame", main)
+    pages[i].Size = UDim2.new(1,0,1,-30)
+    pages[i].Position = UDim2.new(0,0,0,30)
+    pages[i].BackgroundColor3 = Color3.fromRGB(28,28,28)
+    pages[i].Visible = false
+    pages[i].ZIndex = 11
+    b.MouseButton1Click:Connect(function() switchTab(i) end)
+end
+switchTab(1)
+
+-- UTILS
+local function btn(parent, text, onClick)
+    local b = Instance.new("TextButton", parent)
+    b.Text = text
+    b.Font = Enum.Font.Gotham
+    b.TextSize = 14
+    b.TextColor3 = Color3.new(1,1,1)
+    b.BackgroundColor3 = Color3.fromRGB(55,55,55)
+    b.Size = UDim2.new(0.48,0,0,28)
+    b.ZIndex = 12
+    b.MouseButton1Click:Connect(onClick)
+    return b
+end
+
+local function slider(parent, lbl, min, max, def, cb)
+    local y = #parent:GetChildren()*35
+    local t = Instance.new("TextLabel", parent)
+    t.Text = lbl..": "..def
+    t.Font = Enum.Font.Gotham
+    t.TextSize = 14
+    t.TextColor3 = Color3.new(1,1,1)
+    t.BackgroundTransparency = 1
+    t.Size = UDim2.new(1,-20,0,20)
+    t.Position = UDim2.new(0,10,0,y)
+    t.ZIndex = 12
+    local s = Instance.new("Frame", parent)
+    s.Position = UDim2.new(0,10,0,y+20)
+    s.Size = UDim2.new(1,-20,0,12)
+    s.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    s.ZIndex = 12
+    local f = Instance.new("Frame", s)
+    f.Size = UDim2.new((def-min)/(max-min),0,1,0)
+    f.BackgroundColor3 = Color3.fromRGB(0,170,255)
+    f.ZIndex = 13
+    local dragging = false
+    
+    s.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+        end
+    end)
+    
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+    
+    local connection
+    connection = RunService.RenderStepped:Connect(function()
+        if dragging then
+            local mX = UIS:GetMouseLocation().X
+            local px = s.AbsolutePosition.X
+            local sx = s.AbsoluteSize.X
+            local pct = math.clamp((mX-px)/sx, 0, 1)
+            f.Size = UDim2.new(pct,0,1,0)
+            local v = math.floor((min + (max-min)*pct)*10)/10
+            t.Text = lbl..": "..v
+            cb(v)
+        end
+    end)
+end
+
+local function toggleBtn(parent, text, initialState, callback)
+    local btn = Instance.new("TextButton", parent)
+    btn.Text = text..": "..(initialState and "ON" or "OFF")
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = 14
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.BackgroundColor3 = Color3.fromRGB(55,55,55)
+    btn.Size = UDim2.new(0.48,0,0,28)
+    btn.ZIndex = 12
+    
+    btn.MouseButton1Click:Connect(function()
+        local newState = not (btn.Text:find("ON") ~= nil)
+        btn.Text = text..": "..(newState and "ON" or "OFF")
+        callback(newState)
+    end)
+    
+    return btn
+end
+
+-- BUILD UI
+-- AIMBOT TAB
+local aPage = pages[1]
+
+slider(aPage,"FOV",20,300,settings.VisualFOV,function(v) settings.VisualFOV=v end)
+slider(aPage,"Smoothing",0.05,1,settings.AimbotSmooth,function(v) settings.AimbotSmooth=v end)
+
+-- Position buttons lower in the aimbot tab
+local teamCheckAimbotBtn = toggleBtn(aPage, "Team Check", settings.TeamCheckAimbot, function(state)
+    settings.TeamCheckAimbot = state
+end)
+teamCheckAimbotBtn.Position = UDim2.new(0.02, 0, 0, 140) -- Lowered from 100 to 140
+
+local angleProofBtn = toggleBtn(aPage, "Angle Proof", settings.AngleProof, function(state)
+    settings.AngleProof = state
+end)
+angleProofBtn.Position = UDim2.new(0.02, 0, 0, 175) -- Lowered from 135 to 175
+
+-- ESP TAB
+local ePage = pages[2]
+
+local espToggleBtn = toggleBtn(ePage, "ESP", settings.ESPEnabled, function(state)
+    settings.ESPEnabled = state
+end)
+espToggleBtn.Position = UDim2.new(0.02, 0, 0, 0)
+espToggleBtn.Size = UDim2.new(0.96, 0, 0, 28)
+
+local teamCheckEspBtn = toggleBtn(ePage, "Team Check", settings.TeamCheckESP, function(state)
+    settings.TeamCheckESP = state
+end)
+teamCheckEspBtn.Position = UDim2.new(0.02, 0, 0, 35)
+
+-- EXPLOIT TAB
+local exPage = pages[3]
+slider(exPage,"Speed",1,10,settings.SpeedMult,function(v) settings.SpeedMult=v end)
+
+-- KEYBINDS TAB
+local kPage = pages[4]
+
+local keybindNames = {
+    "Aimbot",
+    "ESP",
+    "Fly",
+    "Speed",
+    "ToggleMenu"
+}
+
+local keybindButtons = {}
+local listening = false
+local currentKeybind = nil
+
+local function updateKeybindButtons()
+    for i, name in ipairs(keybindNames) do
+        keybindButtons[name].Text = name..": "..tostring(settings.Keybinds[name]):gsub("Enum.KeyCode.", "")
+    end
+end
+
+for i, name in ipairs(keybindNames) do
+    local btn = Instance.new("TextButton", kPage)
+    btn.Text = name..": "..tostring(settings.Keybinds[name]):gsub("Enum.KeyCode.", "")
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = 14
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.BackgroundColor3 = Color3.fromRGB(55,55,55)
+    btn.Size = UDim2.new(0.96, 0, 0, 28)
+    btn.Position = UDim2.new(0.02, 0, 0, (i-1)*35)
+    btn.ZIndex = 12
+    btn.MouseButton1Click:Connect(function()
+        if not listening then
+            listening = true
+            currentKeybind = name
+            btn.Text = "Press any key..."
+        end
+    end)
+    keybindButtons[name] = btn
+end
+
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if listening and not gameProcessed and input.UserInputType == Enum.UserInputType.Keyboard then
+        settings.Keybinds[currentKeybind] = input.KeyCode
+        listening = false
+        updateKeybindButtons()
+        currentKeybind = nil
+    end
+end)
+
+-- DRAWING MANAGEMENT
+local drawings = {}
+local fovCircle = Drawing.new("Circle")
+fovCircle.Visible = true
+fovCircle.Color = Color3.fromRGB(0,170,255)
+fovCircle.Thickness = 1
+fovCircle.Filled = false
+fovCircle.Radius = settings.VisualFOV
+
+-- Death detection function
+local function checkAlive()
+    if not LocalPlayer.Character then
+        isAlive = false
+        return false
+    end
+    
+    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
+        isAlive = false
+        return false
+    end
+    
+    isAlive = true
+    return true
+end
+
+-- Check if a kill just happened
+local function checkKillCooldown()
+    return (tick() - lastKillTime) < killCooldown
+end
+
+-- GET TARGET LOGIC
+local function getLockable()
+    if checkKillCooldown() then
+        return nil
+    end
+    
+    local closestPlayer = nil
+    local closestDistance = math.huge
+    local mouse = UIS:GetMouseLocation()
+    local cameraPos = Camera.CFrame.Position
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            if settings.TeamCheckAimbot and plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
+                continue
+            end
+            
+            local humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
+            local head = plr.Character:FindFirstChild("Head")
+            
+            if humanoid and humanoid.Health > 0 and head then
+                local toTarget = (head.Position - cameraPos)
+                local dot = Camera.CFrame.LookVector:Dot(toTarget.Unit)
+                
+                local angleCondition = true
+                if settings.AngleProof then
+                    angleCondition = (head.Position.Y > (cameraPos.Y - 5))
+                else
+                    angleCondition = (cameraPos.Y - head.Position.Y <= 20)
+                end
+                
+                if dot > 0 and angleCondition then
+                    local p2, on = Camera:WorldToViewportPoint(head.Position)
+                    if on then
+                        local screenDistance = (Vector2.new(p2.X, p2.Y) - mouse).Magnitude
+                        if screenDistance <= settings.VisualFOV then
+                            local distance = (head.Position - cameraPos).Magnitude
+                            
+                            if distance < closestDistance then
+                                closestDistance = distance
+                                closestPlayer = plr
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closestPlayer
+end
+
+-- 3D BOX ESP FUNCTION
+local function draw3DBox(character, color)
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    local size = Vector3.new(1.5, 2.5, 1.5)
+    local corners = {
+        root.CFrame * CFrame.new(size.X, size.Y, size.Z),
+        root.CFrame * CFrame.new(-size.X, size.Y, size.Z),
+        root.CFrame * CFrame.new(-size.X, size.Y, -size.Z),
+        root.CFrame * CFrame.new(size.X, size.Y, -size.Z),
+        root.CFrame * CFrame.new(size.X, -size.Y, size.Z),
+        root.CFrame * CFrame.new(-size.X, -size.Y, size.Z),
+        root.CFrame * CFrame.new(-size.X, -size.Y, -size.Z),
+        root.CFrame * CFrame.new(size.X, -size.Y, -size.Z)
+    }
+    
+    local edges = {
+        {1,2}, {2,3}, {3,4}, {4,1},
+        {5,6}, {6,7}, {7,8}, {8,5},
+        {1,5}, {2,6}, {3,7}, {4,8}
+    }
+    
+    for _, edge in ipairs(edges) do
+        local p1 = corners[edge[1]]
+        local p2 = corners[edge[2]]
+        
+        local v1, v1on = Camera:WorldToViewportPoint(p1.Position)
+        local v2, v2on = Camera:WorldToViewportPoint(p2.Position)
+        
+        if v1on and v2on then
+            local line = Drawing.new("Line")
+            line.Visible = true
+            line.Color = color
+            line.Thickness = 2
+            line.From = Vector2.new(v1.X, v1.Y)
+            line.To = Vector2.new(v2.X, v2.Y)
+            table.insert(drawings, line)
+        end
+    end
+end
+
+-- RENDER LOOP
+RunService.RenderStepped:Connect(function()
+    checkAlive()
+
+    gui.Enabled = settings.MenuVisible
+
+    fovCircle.Position = UIS:GetMouseLocation()
+    fovCircle.Radius = settings.VisualFOV
+
+    for _, d in ipairs(drawings) do 
+        if d then
+            d:Remove()
+        end
+    end
+    drawings = {}
+    
+    if settings.ESPEnabled then
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local color = Color3.fromRGB(0, 255, 0)
+                if settings.TeamCheckESP and plr.Team and LocalPlayer.Team then
+                    if plr.Team == LocalPlayer.Team then
+                        color = Color3.fromRGB(0, 0, 255)
+                    else
+                        color = Color3.fromRGB(255, 0, 0)
+                    end
+                end
+                
+                local humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid and humanoid.Health > 0 then
+                    draw3DBox(plr.Character, color)
+                end
+            end
+        end
+    end
+
+    if settings.AimbotEnabled then
+        if checkKillCooldown() then
+            settings.LockedTarget = nil
+        else
+            if settings.LockedTarget then
+                local char = settings.LockedTarget.Character
+                local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+                local head = char and char:FindFirstChild("Head")
+                
+                if char and head then
+                    local toTarget = (head.Position - Camera.CFrame.Position)
+                    local dot = Camera.CFrame.LookVector:Dot(toTarget.Unit)
+                    
+                    local angleCondition = true
+                    if settings.AngleProof then
+                        angleCondition = (head.Position.Y > (Camera.CFrame.Position.Y - 5))
+                    else
+                        angleCondition = (Camera.CFrame.Position.Y - head.Position.Y <= 20)
+                    end
+                    
+                    local teamCondition = true
+                    if settings.TeamCheckAimbot and settings.LockedTarget.Team and LocalPlayer.Team then
+                        teamCondition = (settings.LockedTarget.Team ~= LocalPlayer.Team)
+                    end
+                    
+                    if not humanoid or humanoid.Health <= 0 or dot <= 0 or not angleCondition or not teamCondition then
+                        if humanoid and humanoid.Health <= 0 then
+                            lastKillTime = tick()
+                        end
+                        settings.LockedTarget = nil
+                    end
+                else
+                    settings.LockedTarget = nil
+                end
+            end
+            
+            if not settings.LockedTarget and not checkKillCooldown() then
+                settings.LockedTarget = getLockable()
+            end
+            
+            if settings.LockedTarget and settings.LockedTarget.Character then
+                local head = settings.LockedTarget.Character:FindFirstChild("Head")
+                if head then
+                    local cf = CFrame.new(Camera.CFrame.Position, head.Position)
+                    Camera.CFrame = Camera.CFrame:Lerp(cf, settings.AimbotSmooth)
+                end
+            end
+        end
+    end
+
+    if settings.FlyEnabled and isAlive and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        LocalPlayer.Character.HumanoidRootPart.Velocity = Camera.CFrame.LookVector * (settings.SpeedMult * 16)
+    end
+
+    if settings.SpeedEnabled and isAlive and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        LocalPlayer.Character.Humanoid.WalkSpeed = settings.SpeedMult*16
+    end
+end)
+
+-- KEYBINDS
+UIS.InputBegan:Connect(function(i, g)
+    if g then return end
+    if i.KeyCode == settings.Keybinds.ToggleMenu then
+        settings.MenuVisible = not settings.MenuVisible
+    elseif i.KeyCode == settings.Keybinds.Aimbot then
+        settings.AimbotEnabled = not settings.AimbotEnabled
+        if not settings.AimbotEnabled then settings.LockedTarget = nil end
+    elseif i.KeyCode == settings.Keybinds.ESP then
+        settings.ESPEnabled = not settings.ESPEnabled
+    elseif i.KeyCode == settings.Keybinds.Fly then
+        settings.FlyEnabled = not settings.FlyEnabled
+    elseif i.KeyCode == settings.Keybinds.Speed then
+        settings.SpeedEnabled = not settings.SpeedEnabled
+        if not settings.SpeedEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+            LocalPlayer.Character.Humanoid.WalkSpeed = 16
+        end
+    end
+end)
+
+-- Character added event
+LocalPlayer.CharacterAdded:Connect(function()
+    isAlive = true
+end)
