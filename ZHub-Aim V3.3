@@ -1,0 +1,847 @@
+-- ZHub-Aim v3.3 (Menu from v3.2 + NPC detection & safety checks from v3.2, with v3.3 features)
+-- Modified to reset ESP every second
+print("Loading ZHub-Aim v3.3")
+
+-- SERVICES
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local CollectionService = game:GetService("CollectionService")
+
+-- SAFETY WAIT for LocalPlayer
+if not LocalPlayer then
+    repeat task.wait() until Players.LocalPlayer
+    LocalPlayer = Players.LocalPlayer
+end
+
+-- SETTINGS
+local settings = {
+    MenuVisible = true,
+    AimbotEnabled = false,
+    AimbotMode = "Toggle",
+    ESPEnabled = false,
+    FlyEnabled = false,
+    SpeedEnabled = false,
+    VisualFOV = 80,
+    ShowFOV = true,
+    AimbotSmooth = 0.2,
+    SpeedMult = 2,
+    ESPMode = "3D Box",
+    LockedTarget = nil,
+    TeamCheckAimbot = true,
+    TeamCheckESP = true,
+    TeamCheckNPC = true,
+    UseCollectionService = true,
+    VisionConeCheck = false,
+    AngleProof = true,
+    AimbotType = "Camera",
+    FlyMode = "LookDirection",
+    DetectNPCs = true,
+    NPCColor = Color3.fromRGB(255, 165, 0),
+    FriendlyNPCColor = Color3.fromRGB(0, 255, 0),
+    HostileNPCColor = Color3.fromRGB(255, 0, 0),
+    DebugMode = false,
+    Keybinds = {
+        Aimbot = Enum.KeyCode.LeftAlt,
+        ESP = Enum.KeyCode.X,
+        Fly = Enum.KeyCode.End,
+        Speed = Enum.KeyCode.KeypadFive,
+        ToggleMenu = Enum.KeyCode.Insert
+    }
+}
+
+-- LOCAL CACHE
+local math_clamp = math.clamp
+local math_floor = math.floor
+local Vector2_new = Vector2.new
+local Vector3_new = Vector3.new
+local CFrame_new = CFrame.new
+local Color3_fromRGB = Color3.fromRGB
+local tick = tick
+local floor = math.floor
+
+-- STATE
+local playerList = Players:GetPlayers()
+local isAlive = true
+local killedPlayers = {}
+local npcs = {}
+local hostileNPCs = {}
+local friendlyNPCs = {}
+local flyKeys = {W=false,A=false,S=false,D=false,Space=false,Shift=false}
+local baseWalkSpeed = 16
+local speedMultiplier = baseWalkSpeed * settings.SpeedMult
+local lastPlayersUpdate = 0
+local playerUpdateInterval = 2
+local lastNPCCheck = 0
+local lastESPReset = 0  -- Track when ESP was last reset
+
+-- Update player cache on join/leave
+Players.PlayerAdded:Connect(function() playerList = Players:GetPlayers() end)
+Players.PlayerRemoving:Connect(function() playerList = Players:GetPlayers() end)
+
+-- GUI SETUP (menu/layout from v3.4)
+local gui = Instance.new("ScreenGui")
+gui.Name = "DevToolkit"
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.DisplayOrder = 999
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.new(0, 300, 0, 450)
+main.Position = UDim2.new(1, -310, 1, -460)
+main.BackgroundColor3 = Color3.fromRGB(22,22,22)
+main.BorderSizePixel = 0
+main.ZIndex = 10
+
+local TFrame = Instance.new("Frame", main)
+TFrame.Size = UDim2.new(1, 0, 0, 30)
+TFrame.BackgroundColor3 = Color3.fromRGB(35,35,35)
+TFrame.ZIndex = 11
+
+-- Tabs
+local pages = {}
+local tabNames = {"Aimbot","FOV","ESP","Exploits","Keybinds"}
+local function switchTab(i)
+    for idx, pg in ipairs(pages) do pg.Visible = (idx == i) end
+end
+
+for i, name in ipairs(tabNames) do
+    local b = Instance.new("TextButton", TFrame)
+    b.Text = name
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.TextColor3 = Color3.new(1,1,1)
+    b.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    b.Size = UDim2.new(1/#tabNames, 0, 1, 0)
+    b.Position = UDim2.new((i-1)/#tabNames, 0, 0, 0)
+    b.ZIndex = 12
+    pages[i] = Instance.new("Frame", main)
+    pages[i].Size = UDim2.new(1,0,1,-30)
+    pages[i].Position = UDim2.new(0,0,0,30)
+    pages[i].BackgroundColor3 = Color3.fromRGB(28,28,28)
+    pages[i].Visible = false
+    pages[i].ZIndex = 11
+    b.MouseButton1Click:Connect(function() switchTab(i) end)
+end
+switchTab(1)
+
+-- Simple UI helper (toggle btn)
+local function toggleBtn(parent, text, initialState, callback)
+    local btn = Instance.new("TextButton", parent)
+    btn.Text = text..": "..(initialState and "ON" or "OFF")
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = 14
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.BackgroundColor3 = Color3.fromRGB(55,55,55)
+    btn.Size = UDim2.new(0.48,0,0,28)
+    btn.ZIndex = 12
+    btn.MouseButton1Click:Connect(function()
+        local newState = not (btn.Text:find("ON") ~= nil)
+        btn.Text = text..": "..(newState and "ON" or "OFF")
+        callback(newState)
+    end)
+    return btn
+end
+
+-- Slider helper (from v3.4)
+local function slider(parent, lbl, min, max, def, cb)
+    local y = #parent:GetChildren()*35
+    local t = Instance.new("TextLabel", parent)
+    t.Text = lbl..": "..def
+    t.Font = Enum.Font.Gotham
+    t.TextSize = 14
+    t.TextColor3 = Color3.new(1,1,1)
+    t.BackgroundTransparency = 1
+    t.Size = UDim2.new(1,-20,0,20)
+    t.Position = UDim2.new(0,10,0,y)
+    t.ZIndex = 12
+    t.TextXAlignment = Enum.TextXAlignment.Left
+
+    local s = Instance.new("Frame", parent)
+    s.Position = UDim2.new(0,10,0,y+20)
+    s.Size = UDim2.new(1,-20,0,12)
+    s.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    s.ZIndex = 12
+    s.BorderSizePixel = 0
+
+    local f = Instance.new("Frame", s)
+    local pctDefault = (def-min)/(max-min)
+    f.Size = UDim2.new(pctDefault,0,1,0)
+    f.BackgroundColor3 = Color3.fromRGB(0,170,255)
+    f.ZIndex = 13
+    f.BorderSizePixel = 0
+
+    local dragging = false
+    local conn
+
+    local function startDrag()
+        if conn then conn:Disconnect() end
+        dragging = true
+        conn = RunService.RenderStepped:Connect(function()
+            if not dragging then return end
+            local mousePos = UIS:GetMouseLocation()
+            local absolutePosition = s.AbsolutePosition
+            local absoluteSize = s.AbsoluteSize
+            local relativeX = (mousePos.X - absolutePosition.X)
+            local pct = math_clamp(relativeX / absoluteSize.X, 0, 1)
+            f.Size = UDim2.new(pct,0,1,0)
+            local v = math_floor((min + (max-min)*pct)*100)/100
+            t.Text = lbl..": "..v
+            cb(v)
+        end)
+    end
+
+    local function endDrag()
+        dragging = false
+        if conn then conn:Disconnect(); conn = nil end
+    end
+
+    s.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            startDrag()
+        end
+    end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            endDrag()
+        end
+    end)
+end
+
+-- Build UI (Aimbot tab, FOV, ESP, Exploits, Keybinds) - taken from v3.2 but will interact with merged internals
+local aPage = pages[1]
+local aimbotTypeBtn = Instance.new("TextButton", aPage)
+aimbotTypeBtn.Text = "Aimbot Type: "..settings.AimbotType
+aimbotTypeBtn.Font = Enum.Font.Gotham
+aimbotTypeBtn.TextSize = 14
+aimbotTypeBtn.TextColor3 = Color3.new(1,1,1)
+aimbotTypeBtn.BackgroundColor3 = Color3.fromRGB(55,55,55)
+aimbotTypeBtn.Size = UDim2.new(0.96,0,0,28)
+aimbotTypeBtn.Position = UDim2.new(0.02, 0, 0, 0)
+aimbotTypeBtn.ZIndex = 12
+aimbotTypeBtn.MouseButton1Click:Connect(function()
+    settings.AimbotType = (settings.AimbotType == "Camera") and "Mouse" or "Camera"
+    aimbotTypeBtn.Text = "Aimbot Type: "..settings.AimbotType
+end)
+
+local aimbotModeBtn = Instance.new("TextButton", aPage)
+aimbotModeBtn.Text = "Aimbot Mode: "..settings.AimbotMode
+aimbotModeBtn.Font = Enum.Font.Gotham
+aimbotModeBtn.TextSize = 14
+aimbotModeBtn.TextColor3 = Color3.new(1,1,1)
+aimbotModeBtn.BackgroundColor3 = Color3.fromRGB(55,55,55)
+aimbotModeBtn.Size = UDim2.new(0.96,0,0,28)
+aimbotModeBtn.Position = UDim2.new(0.02, 0, 0, 35)
+aimbotModeBtn.ZIndex = 12
+aimbotModeBtn.MouseButton1Click:Connect(function()
+    settings.AimbotMode = (settings.AimbotMode == "Toggle") and "Hold" or "Toggle"
+    aimbotModeBtn.Text = "Aimbot Mode: "..settings.AimbotMode
+end)
+
+slider(aPage,"Smoothing",0.02,1,settings.AimbotSmooth,function(v) settings.AimbotSmooth = v end)
+local teamCheckAimbotBtn = toggleBtn(aPage, "Team Check", settings.TeamCheckAimbot, function(state) settings.TeamCheckAimbot = state end)
+teamCheckAimbotBtn.Position = UDim2.new(0.02, 0, 0, 120)
+local angleProofBtn = toggleBtn(aPage, "Angle Proof", settings.AngleProof, function(state) settings.AngleProof = state end)
+angleProofBtn.Position = UDim2.new(0.02, 0, 0, 155)
+local npcDetectionBtn = toggleBtn(aPage, "NPC Detection", settings.DetectNPCs, function(state) settings.DetectNPCs = state end)
+npcDetectionBtn.Position = UDim2.new(0.02, 0, 0, 190)
+npcDetectionBtn.Size = UDim2.new(0.96, 0, 0, 28)
+
+-- FOV TAB
+local fPage = pages[2]
+local fovVisibilityBtn = toggleBtn(fPage, "Show FOV", settings.ShowFOV, function(state) settings.ShowFOV = state end)
+fovVisibilityBtn.Position = UDim2.new(0.02,0,0,0); fovVisibilityBtn.Size = UDim2.new(0.96,0,0,28)
+slider(fPage,"FOV",20,300,settings.VisualFOV,function(v) settings.VisualFOV = v end)
+
+-- ESP TAB
+local ePage = pages[3]
+local espToggleBtn = toggleBtn(ePage, "ESP", settings.ESPEnabled, function(state) settings.ESPEnabled = state end)
+espToggleBtn.Position = UDim2.new(0.02,0,0,0); espToggleBtn.Size = UDim2.new(0.96,0,0,28)
+local teamCheckEspBtn = toggleBtn(ePage, "Team Check", settings.TeamCheckESP, function(state) settings.TeamCheckESP = state end)
+teamCheckEspBtn.Position = UDim2.new(0.02,0,0,35)
+
+-- EXPLOITS TAB
+local exPage = pages[4]
+slider(exPage,"Speed",1,10,settings.SpeedMult,function(v) settings.SpeedMult = v; speedMultiplier = baseWalkSpeed * v end)
+local flyModeBtn = Instance.new("TextButton", exPage)
+flyModeBtn.Text = "Fly Mode: "..settings.FlyMode
+flyModeBtn.Font = Enum.Font.Gotham
+flyModeBtn.TextSize = 14
+flyModeBtn.TextColor3 = Color3.new(1,1,1)
+flyModeBtn.BackgroundColor3 = Color3.fromRGB(55,55,55)
+flyModeBtn.Size = UDim2.new(0.96,0,0,28)
+flyModeBtn.Position = UDim2.new(0.02, 0, 0, 110)
+flyModeBtn.ZIndex = 12
+flyModeBtn.MouseButton1Click:Connect(function()
+    settings.FlyMode = (settings.FlyMode == "LookDirection") and "WSAD" or "LookDirection"
+    flyModeBtn.Text = "Fly Mode: "..settings.FlyMode
+end)
+
+-- KEYBINDS TAB
+local kPage = pages[5]
+local keybindNames = {"Aimbot","ESP","Fly","Speed","ToggleMenu"}
+local keybindButtons = {}
+local listening = false
+local currentKeybind = nil
+local function updateKeybindButtons()
+    for i, name in ipairs(keybindNames) do
+        if keybindButtons[name] then
+            keybindButtons[name].Text = name..": "..tostring(settings.Keybinds[name]):gsub("Enum.KeyCode.", "")
+        end
+    end
+end
+
+for i, name in ipairs(keybindNames) do
+    local btn = Instance.new("TextButton", kPage)
+    btn.Text = name..": "..tostring(settings.Keybinds[name]):gsub("Enum.KeyCode.", "")
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = 14
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.BackgroundColor3 = Color3.fromRGB(55,55,55)
+    btn.Size = UDim2.new(0.96, 0, 0, 28)
+    btn.Position = UDim2.new(0.02, 0, 0, (i-1)*35)
+    btn.ZIndex = 12
+    btn.MouseButton1Click:Connect(function()
+        if not listening then
+            listening = true
+            currentKeybind = name
+            btn.Text = "Press any key..."
+        end
+    end)
+    keybindButtons[name] = btn
+end
+
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if listening and not gameProcessed and input.UserInputType == Enum.UserInputType.Keyboard then
+        settings.Keybinds[currentKeybind] = input.KeyCode
+        listening = false
+        currentKeybind = nil
+        updateKeybindButtons()
+    end
+end)
+
+-- DRAWING POOL (ESP) - same as v3.2/v3.3 pooling
+local drawingPool = {}
+local function createBoxLines()
+    local lines = {}
+    local ok, line
+    for i=1,12 do
+        ok, line = pcall(function()
+            return Drawing.new("Line")
+        end)
+        if ok and line then
+            line.Thickness = 2
+            line.Visible = false
+            table.insert(lines, line)
+        else
+            -- if Drawing unavailable, stop and return what we have (or nil)
+            return nil
+        end
+    end
+    return lines
+end
+
+local function getPoolForInstance(inst)
+    if not inst then return nil end
+    if drawingPool[inst] then
+        drawingPool[inst].lastUsed = tick()
+        return drawingPool[inst].lines
+    end
+    local lines = createBoxLines()
+    if not lines then return nil end
+    drawingPool[inst] = { lines = lines, lastUsed = tick() }
+    return lines
+end
+
+-- FOV circle (Drawing)
+local fovCircle
+local okCircle, _ = pcall(function() fovCircle = Drawing.new("Circle") end)
+if okCircle and fovCircle then
+    fovCircle.Visible = settings.ShowFOV
+    fovCircle.Color = Color3.fromRGB(0,170,255)
+    fovCircle.Thickness = 1
+    fovCircle.Filled = false
+end
+
+-- IMPROVED NPC DETECTION (v3.2 style: scanFolder + name-based classification)
+local function findNPCs()
+    npcs = {}
+    hostileNPCs = {}
+    friendlyNPCs = {}
+
+    local function scanFolder(folder)
+        if not folder then return end
+        for _, obj in ipairs(folder:GetDescendants()) do
+            if obj:IsA("Model") and not Players:GetPlayerFromCharacter(obj) then
+                local humanoid = obj:FindFirstChildOfClass("Humanoid")
+                local head = obj:FindFirstChild("Head") or obj:FindFirstChild("HumanoidRootPart")
+                if humanoid and humanoid.Health > 0 and head then
+                    table.insert(npcs, obj)
+                    local nameLower = obj.Name:lower()
+                    if nameLower:find("enemy") or nameLower:find("hostile") or nameLower:find("bandit") then
+                        hostileNPCs[obj] = true
+                    elseif nameLower:find("friendly") or nameLower:find("ally") or nameLower:find("civilian") then
+                        friendlyNPCs[obj] = true
+                    else
+                        hostileNPCs[obj] = true -- default to hostile for safety
+                    end
+                end
+            end
+        end
+    end
+
+    -- Scan entire workspace
+    scanFolder(workspace)
+    -- Also scan common NPC folders
+    local commonFolders = {"NPCs", "Enemies", "Characters", "Mobs", "AI", "Humanoids"}
+    for _, folderName in ipairs(commonFolders) do
+        local folder = workspace:FindFirstChild(folderName)
+        scanFolder(folder)
+    end
+
+    if settings.DebugMode then
+        print("NPC Scan Complete:")
+        print("Total NPCs: " .. #npcs)
+        local hostileCount, friendlyCount = 0, 0
+        for _, v in pairs(hostileNPCs) do if v then hostileCount = hostileCount + 1 end end
+        for _, v in pairs(friendlyNPCs) do if v then friendlyCount = friendlyCount + 1 end end
+        print("Hostile: " .. hostileCount)
+        print("Friendly: " .. friendlyCount)
+    end
+end
+
+-- ALIVE CHECK
+local function checkAlive()
+    if not LocalPlayer.Character then
+        isAlive = false
+        return false
+    end
+    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
+        isAlive = false
+        return false
+    end
+    isAlive = true
+    return true
+end
+
+-- FIXED FOV CHECK (v3.2)
+local function isInFOV(worldPos)
+    if not worldPos then return false end
+    local screenPos, onScreen = Camera:WorldToViewportPoint(worldPos)
+    if not onScreen then return false end
+    if screenPos.Z < 0 then return false end -- behind camera
+    -- viewport clamp (camera.world->viewport yields pixel coords; ensure inside)
+    local mousePos = UIS:GetMouseLocation()
+    local distance = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+    return distance <= settings.VisualFOV
+end
+
+-- FIXED GET TARGET (v3.4)
+local function getLockable()
+    local closestTarget, closestDistance = nil, math.huge
+    local camPos = Camera.CFrame.Position
+
+    -- players
+    for _, plr in ipairs(playerList) do
+        if plr ~= LocalPlayer and plr.Character then
+            if settings.TeamCheckAimbot and plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then continue end
+            local humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
+            local head = plr.Character:FindFirstChild("Head")
+            if humanoid and humanoid.Health > 0 and head then
+                if (head.Position - camPos).Magnitude > 1000 then continue end -- too far away
+                if isInFOV(head.Position) then
+                    local dist = (head.Position - camPos).Magnitude
+                    if dist < closestDistance then
+                        closestDistance = dist
+                        closestTarget = { Type = "Player", Object = plr }
+                    end
+                end
+            end
+        end
+    end
+
+    -- NPCs
+    if settings.DetectNPCs then
+        for _, npc in ipairs(npcs) do
+            local humanoid = npc:FindFirstChildOfClass("Humanoid")
+            local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
+            if humanoid and humanoid.Health > 0 and head then
+                if settings.TeamCheckNPC and friendlyNPCs[npc] then continue end
+                if (head.Position - camPos).Magnitude > 1000 then continue end
+                if isInFOV(head.Position) then
+                    local dist = (head.Position - camPos).Magnitude
+                    if dist < closestDistance then
+                        closestDistance = dist
+                        closestTarget = { Type = "NPC", Object = npc }
+                    end
+                end
+            end
+        end
+    end
+
+    return closestTarget
+end
+
+-- FIXED TARGET VALIDATION (v3.4)
+local function isTargetValid(target)
+    if not target then return false end
+    if target.Type == "Player" then
+        local plr = target.Object
+        if not plr or not plr.Character then return false end
+        local humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
+        local head = plr.Character:FindFirstChild("Head")
+        if not humanoid or humanoid.Health <= 0 or not head then return false end
+        if settings.TeamCheckAimbot and plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then return false end
+        local camPos = Camera.CFrame.Position
+        if (head.Position - camPos).Magnitude > 1000 then return false end
+        return isInFOV(head.Position)
+    elseif target.Type == "NPC" then
+        local npc = target.Object
+        if not npc or not npc.Parent then return false end
+        local humanoid = npc:FindFirstChildOfClass("Humanoid")
+        local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
+        if not humanoid or humanoid.Health <= 0 or not head then return false end
+        if settings.TeamCheckNPC and friendlyNPCs[npc] then return false end
+        local camPos = Camera.CFrame.Position
+        if (head.Position - camPos).Magnitude > 1000 then return false end
+        return isInFOV(head.Position)
+    end
+    return false
+end
+
+-- FIXED MOUSE AIM (v3.4)
+local function mouseAimAt(target)
+    if not target then return end
+    local head
+    if target.Type == "Player" then
+        head = target.Object.Character and target.Object.Character:FindFirstChild("Head")
+    else
+        head = target.Object:FindFirstChild("Head") or target.Object:FindFirstChild("HumanoidRootPart")
+    end
+    if not head then return end
+    local camPos = Camera.CFrame.Position
+    if (head.Position - camPos).Magnitude > 1000 then return end
+    local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+    if onScreen and screenPos.Z > 0 then
+        local mousePos = UIS:GetMouseLocation()
+        local dx = screenPos.X - mousePos.X
+        local dy = screenPos.Y - mousePos.Y
+        if math.abs(dx) > 500 or math.abs(dy) > 500 then return end
+        local smooth = math.clamp(settings.AimbotSmooth, 0.01, 1)
+        dx = dx * smooth
+        dy = dy * smooth
+        if mousemoverel then
+            pcall(function() mousemoverel(dx, dy) end)
+        end
+    end
+end
+
+-- FIXED CAMERA AIM (v3.4)
+local function cameraAimAt(target)
+    if not target then return end
+    local head
+    if target.Type == "Player" then
+        head = target.Object.Character and target.Object.Character:FindFirstChild("Head")
+    else
+        head = target.Object:FindFirstChild("Head") or target.Object:FindFirstChild("HumanoidRootPart")
+    end
+    if not head then return end
+    local camPos = Camera.CFrame.Position
+    if (head.Position - camPos).Magnitude > 1000 then return end
+    local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+    if onScreen and screenPos.Z > 0 then
+        local cf = CFrame_new(camPos, head.Position)
+        Camera.CFrame = Camera.CFrame:Lerp(cf, math.clamp(settings.AimbotSmooth, 0.01, 1))
+    end
+end
+
+-- ESP BOX UPDATER (v3.4 size & checks)
+local function update3DBoxForInstance(inst, color, isNPC)
+    if not inst then return end
+    local root = nil
+    if isNPC then
+        root = inst:FindFirstChild("HumanoidRootPart") or inst:FindFirstChild("Head")
+    else
+        root = inst.Character and (inst.Character:FindFirstChild("HumanoidRootPart") or inst.Character:FindFirstChild("Head"))
+    end
+    if not root then return end
+
+    local size = Vector3_new(2, 3, 2)
+    local rootCFrame = root.CFrame
+    local corners = {
+        rootCFrame * CFrame_new(size.X, size.Y, size.Z),
+        rootCFrame * CFrame_new(-size.X, size.Y, size.Z),
+        rootCFrame * CFrame_new(-size.X, size.Y, -size.Z),
+        rootCFrame * CFrame_new(size.X, size.Y, -size.Z),
+        rootCFrame * CFrame_new(size.X, -size.Y, size.Z),
+        rootCFrame * CFrame_new(-size.X, -size.Y, size.Z),
+        rootCFrame * CFrame_new(-size.X, -size.Y, -size.Z),
+        rootCFrame * CFrame_new(size.X, -size.Y, -size.Z)
+    }
+    local edges = {{1,2},{2,3},{3,4},{4,1},{5,6},{6,7},{7,8},{8,5},{1,5},{2,6},{3,7},{4,8}}
+    local lines = getPoolForInstance(inst)
+    if not lines then return end
+
+    for i, edge in ipairs(edges) do
+        local p1 = corners[edge[1]]
+        local p2 = corners[edge[2]]
+        local v1, v1on = Camera:WorldToViewportPoint(p1.Position)
+        local v2, v2on = Camera:WorldToViewportPoint(p2.Position)
+        if v1on and v2on and v1.Z > 0 and v2.Z > 0 then
+            local L = lines[i]
+            L.Visible = true
+            L.Color = color
+            L.From = Vector2_new(v1.X, v1.Y)
+            L.To = Vector2_new(v2.X, v2.Y)
+        else
+            lines[i].Visible = false
+        end
+    end
+    drawingPool[inst].lastUsed = tick()
+end
+
+-- Clean-up pool entries that are old (v3.4)
+local function cleanupPool()
+    local now = tick()
+    for inst, data in pairs(drawingPool) do
+        if now - data.lastUsed > 5 then
+            for _, line in ipairs(data.lines) do
+                pcall(function() line:Remove() end)
+            end
+            drawingPool[inst] = nil
+        end
+    end
+end
+
+-- Function to reset ESP every second
+local function resetESP()
+    -- Clear all existing ESP lines
+    for inst, data in pairs(drawingPool) do
+        for _, line in ipairs(data.lines) do
+            pcall(function() line:Remove() end)
+        end
+    end
+    drawingPool = {}
+    lastESPReset = tick()
+end
+
+-- FLY HANDLING (WSAD + LookDirection)
+local function handleWSADFly()
+    if not isAlive or not LocalPlayer.Character then return end
+    local root = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local lookVector = Camera.CFrame.LookVector
+    local rightVector = Camera.CFrame.RightVector
+    local moveDir = Vector3_new(0,0,0)
+
+    if flyKeys.W then moveDir = moveDir + Vector3_new(lookVector.X, 0, lookVector.Z) end
+    if flyKeys.S then moveDir = moveDir - Vector3_new(lookVector.X, 0, lookVector.Z) end
+    if flyKeys.D then moveDir = moveDir + Vector3_new(rightVector.X, 0, rightVector.Z) end
+    if flyKeys.A then moveDir = moveDir - Vector3_new(rightVector.X, 0, rightVector.Z) end
+    local vertical = 0
+    if flyKeys.Space then vertical = vertical + 1 end
+    if flyKeys.Shift then vertical = vertical - 1 end
+
+    if moveDir.Magnitude > 0 then moveDir = moveDir.Unit * (baseWalkSpeed * settings.SpeedMult) end
+    local velocity = Vector3_new(moveDir.X, vertical * (baseWalkSpeed * settings.SpeedMult), moveDir.Z)
+    pcall(function() root.Velocity = velocity end)
+end
+
+-- Input tracking for fly keys
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.W then flyKeys.W = true
+    elseif input.KeyCode == Enum.KeyCode.A then flyKeys.A = true
+    elseif input.KeyCode == Enum.KeyCode.S then flyKeys.S = true
+    elseif input.KeyCode == Enum.KeyCode.D then flyKeys.D = true
+    elseif input.KeyCode == Enum.KeyCode.Space then flyKeys.Space = true
+    elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then flyKeys.Shift = true
+    end
+end)
+UIS.InputEnded:Connect(function(input, gameProcessed)
+    if input.KeyCode == Enum.KeyCode.W then flyKeys.W = false
+    elseif input.KeyCode == Enum.KeyCode.A then flyKeys.A = false
+    elseif input.KeyCode == Enum.KeyCode.S then flyKeys.S = false
+    elseif input.KeyCode == Enum.KeyCode.D then flyKeys.D = false
+    elseif input.KeyCode == Enum.KeyCode.Space then flyKeys.Space = false
+    elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then flyKeys.Shift = false
+    end
+end)
+
+-- RENDER LOOP
+local accumulator = 0
+local targetFPS = 60
+local frameTime = 1/targetFPS
+local aimbotHeld = false
+local espIndex = 1
+local ESP_CHUNK = 6
+
+RunService.RenderStepped:Connect(function(delta)
+    accumulator = accumulator + delta
+
+    checkAlive()
+    gui.Enabled = settings.MenuVisible
+
+    -- FOV circle
+    if fovCircle then
+        fovCircle.Visible = settings.ShowFOV
+        local mpos = UIS:GetMouseLocation()
+        fovCircle.Position = mpos
+        fovCircle.Radius = settings.VisualFOV
+    end
+
+    -- periodic NPC updates
+    if tick() - lastNPCCheck > 3 then
+        lastNPCCheck = tick()
+        findNPCs()
+    end
+
+    -- Reset ESP every second
+    if tick() - lastESPReset >= 1 then
+        resetESP()
+    end
+
+    -- clean pool occasionally
+    if math_floor(tick()) % 5 == 0 then cleanupPool() end
+
+    -- ESP updates (sliced)
+    if settings.ESPEnabled then
+        local instances = {}
+        for _, plr in ipairs(playerList) do
+            if plr ~= LocalPlayer and plr.Character then
+                table.insert(instances, {inst = plr, isNPC = false})
+            end
+        end
+        if settings.DetectNPCs then
+            for _, npc in ipairs(npcs) do
+                table.insert(instances, {inst = npc, isNPC = true})
+            end
+        end
+
+        if #instances > 0 then
+            local startIdx = espIndex
+            for i = 1, ESP_CHUNK do
+                local idx = ((startIdx + i - 2) % #instances) + 1
+                local entry = instances[idx]
+                if entry then
+                    local inst = entry.inst
+                    if entry.isNPC then
+                        local humanoid = inst:FindFirstChildOfClass("Humanoid")
+                        if humanoid and humanoid.Health > 0 then
+                            local color = settings.NPCColor
+                            if friendlyNPCs[inst] then color = settings.FriendlyNPCColor elseif hostileNPCs[inst] then color = settings.HostileNPCColor end
+                            update3DBoxForInstance(inst, color, true)
+                        end
+                    else
+                        local humanoid = inst.Character and inst.Character:FindFirstChildOfClass("Humanoid")
+                        if humanoid and humanoid.Health > 0 then
+                            local color = Color3_fromRGB(0,255,0)
+                            if settings.TeamCheckESP and inst.Team and LocalPlayer.Team then
+                                if inst.Team == LocalPlayer.Team then color = Color3_fromRGB(0,0,255) else color = Color3_fromRGB(255,0,0) end
+                            end
+                            update3DBoxForInstance(inst, color, false)
+                        end
+                    end
+                end
+            end
+            espIndex = espIndex + ESP_CHUNK
+            if espIndex > #instances then espIndex = 1 end
+        end
+    else
+        for _, data in pairs(drawingPool) do
+            for _, L in ipairs(data.lines) do
+                pcall(function() L.Visible = false end)
+            end
+        end
+    end
+
+    -- FIXED AIMBOT LOGIC (v3.4)
+    local aimbotActive = (settings.AimbotMode == "Toggle" and settings.AimbotEnabled) or (settings.AimbotMode == "Hold" and aimbotHeld)
+    if aimbotActive then
+        if settings.LockedTarget and not isTargetValid(settings.LockedTarget) then settings.LockedTarget = nil end
+        if not settings.LockedTarget then settings.LockedTarget = getLockable() end
+        if settings.LockedTarget then
+            if settings.AimbotType == "Camera" then
+                cameraAimAt(settings.LockedTarget)
+            else
+                mouseAimAt(settings.LockedTarget)
+            end
+        end
+    else
+        settings.LockedTarget = nil
+    end
+
+    -- Fly handling
+    if settings.FlyEnabled and isAlive and LocalPlayer.Character then
+        local root = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            if settings.FlyMode == "LookDirection" then
+                local lv = Camera.CFrame.LookVector
+                -- safe unit usage
+                local desired2d = Vector3_new(lv.X, 0, lv.Z)
+                local targ = desired2d
+                if targ.Magnitude > 0 then targ = targ.Unit * (baseWalkSpeed * settings.SpeedMult) else targ = Vector3_new(0,0,0) end
+                local yVel = 0
+                if flyKeys.Space then yVel = baseWalkSpeed * settings.SpeedMult end
+                if flyKeys.Shift then yVel = -baseWalkSpeed * settings.SpeedMult end
+                pcall(function() root.Velocity = Vector3_new(targ.X, yVel, targ.Z) end)
+            else
+                handleWSADFly()
+            end
+        end
+    end
+
+    -- Speed toggle
+    if settings.SpeedEnabled and isAlive and LocalPlayer.Character then
+        local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then humanoid.WalkSpeed = baseWalkSpeed * (settings.SpeedMult or 1) end
+    else
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+            LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = baseWalkSpeed
+        end
+    end
+end)
+
+-- KEYBINDS (same as v3.2)
+UIS.InputBegan:Connect(function(i, g)
+    if g then return end
+    if i.KeyCode == settings.Keybinds.ToggleMenu then
+        settings.MenuVisible = not settings.MenuVisible
+    elseif i.KeyCode == settings.Keybinds.Aimbot then
+        if settings.AimbotMode == "Toggle" then
+            settings.AimbotEnabled = not settings.AimbotEnabled
+            if not settings.AimbotEnabled then settings.LockedTarget = nil end
+        else
+            aimbotHeld = true
+        end
+    elseif i.KeyCode == settings.Keybinds.ESP then
+        settings.ESPEnabled = not settings.ESPEnabled
+    elseif i.KeyCode == settings.Keybinds.Fly then
+        settings.FlyEnabled = not settings.FlyEnabled
+        for k,_ in pairs(flyKeys) do flyKeys[k] = false end
+    elseif i.KeyCode == settings.Keybinds.Speed then
+        settings.SpeedEnabled = not settings.SpeedEnabled
+        if not settings.SpeedEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+            LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = baseWalkSpeed
+        end
+    end
+end)
+UIS.InputEnded:Connect(function(i, g)
+    if g then return end
+    if i.KeyCode == settings.Keybinds.Aimbot and settings.AimbotMode == "Hold" then
+        aimbotHeld = false
+        settings.LockedTarget = nil
+    end
+end)
+
+-- Initial NPC scan
+findNPCs()
+
+print("ZHub-Aim v3.3 loaded successfully!")
+print("Press Insert to toggle menu, X for ESP, Left Alt for Aimbot")
