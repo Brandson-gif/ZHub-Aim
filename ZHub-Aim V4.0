@@ -1,6 +1,6 @@
 -- ZHub-Aim v4.0 (Menu from v3.2 + NPC detection & safety checks from v3.2, with v3.3 features)
 -- Modified to reset ESP every second and add SpeedMode + unified Speed slider
-print("Loading ZHub-Aim v4.0")
+print("Loading ZHub-Aim v3.3")
 
 -- SERVICES
 local Players = game:GetService("Players")
