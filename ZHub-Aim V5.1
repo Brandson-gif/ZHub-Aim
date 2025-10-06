@@ -1,5 +1,5 @@
--- ZHub-Aim v5.0 (Optimized — Aimbot, ESP, Fly, Speed, Menu, Keybinds, Radar)
-print("Loading ZHub-Aim v5.0 (Optimized)")
+-- ZHub-Aim v5.1 (Optimized — Aimbot, ESP, Fly, Speed, Menu, Keybinds, Radar)
+print("Loading ZHub-Aim v5.1 (Optimized)")
 
 -- SERVICES
 local Players = game:GetService("Players")
@@ -146,12 +146,23 @@ local titleLabel = Instance.new("TextLabel", header)
 titleLabel.Size = UDim2.new(1, -20, 1, 0)
 titleLabel.Position = UDim2.new(0, 10, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "ZHUB v5.0"
+titleLabel.Text = "ZHUB v5.1"
 titleLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
 titleLabel.TextSize = 18
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.ZIndex = 12
+
+local subtitleLabel = Instance.new("TextLabel", header)
+subtitleLabel.Size = UDim2.new(1, -20, 0, 20)
+subtitleLabel.Position = UDim2.new(0, 10, 0, 25)
+subtitleLabel.BackgroundTransparency = 1
+subtitleLabel.Text = "ULTIMATE EDITION"
+subtitleLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+subtitleLabel.TextSize = 12
+subtitleLabel.Font = Enum.Font.Gotham
+subtitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+subtitleLabel.ZIndex = 12
 
 -- Modern tab system
 local tabsContainer = Instance.new("Frame", main)
@@ -1098,5 +1109,5 @@ end)
 -- Initial NPC scan
 findNPCs()
 
-print("ZHub-Aim v5.0 (Optimized) loaded successfully!")
+print("ZHub-Aim v5.1 (Optimized) loaded successfully!")
 print("Press Insert to toggle menu, X for ESP, Left Alt for Aimbot")
